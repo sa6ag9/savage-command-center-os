@@ -3,12 +3,14 @@ on:
   pull_request:
     paths:
       - 'android/shizuku/**'
+      - 'android/maintenance/**'
       - '.github/workflows/shizuku-bridge.yml'
   push:
     branches:
       - main
     paths:
       - 'android/shizuku/**'
+      - 'android/maintenance/**'
       - '.github/workflows/shizuku-bridge.yml'
 jobs:
   syntax:
@@ -20,6 +22,7 @@ jobs:
         run: |
           bash -n android/shizuku/install-exported-rish.sh
           bash -n android/shizuku/check-phone-shizuku.sh
+          bash -n android/maintenance/savage-remote-guard.sh
       - name: Guard against remote installation and automatic privilege escalation
         shell: bash
         run: |
