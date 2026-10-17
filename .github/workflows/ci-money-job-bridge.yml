@@ -1,0 +1,45 @@
+name: Local Money Engine job bridge safety
+on:
+  push:
+    branches: [feature/phone-money-job-bridge-20261017]
+    paths:
+      - 'android/maintenance/savage-agent-job.py'
+      - 'android/maintenance/MONEY_JOB_BRIDGE.md'
+      - '.github/workflows/ci-money-job-bridge.yml'
+  pull_request:
+    paths:
+      - 'android/maintenance/savage-agent-job.py'
+      - 'android/maintenance/MONEY_JOB_BRIDGE.md'
+      - '.github/workflows/ci-money-job-bridge.yml'
+permissions:
+  contents: read
+jobs:
+  syntax-and-denials:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Python source
+        run: python3 -m py_compile android/maintenance/savage-agent-job.py
+      - name: Reject nonexistent jobs, path-traversal IDs, and missing source
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=android/maintenance/savage-agent-job.py
+          set +e
+          python3 "$f" status --job-id missing-job-20261017 > /tmp/status.json
+          code_status=$?
+          python3 "$f" run --job-id ../invalid > /tmp/path.log 2>&1
+          code_path=$?
+          python3 "$f" run --job-id fail-on-missing-input > /tmp/run.json
+          code_run=$?
+          set -e
+          test "$code_status" -eq 2
+          test "$code_path" -eq 2
+          test "$code_run" -eq 2
+          python3 - <<'PY'
+          import json
+          assert json.load(open("/tmp/status.json"))["status"]=="error"
+          assert json.load(open("/tmp/run.json"))["status"]=="error"
+          print("Expected refusals confirmed (offline fixtures only)")
+          PY
