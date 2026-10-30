@@ -125,7 +125,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, message: 'Integration id is required.', logs });
   }
 
-  if (typeof id !== 'string' || !/^[a-z0-9_]{1,64}$/.test(id)) {
+  if (typeof id !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(id)) {
     return res.status(400).json({ ok: false, verified: false, message: 'Invalid integration ID', logs });
   }
   const tester = Object.hasOwn(TESTERS, id) ? TESTERS[id] : undefined;
