@@ -1062,20 +1062,12 @@ function initIntegrations() {
   if (!grid) return;
   grid.innerHTML = '';
 
-  // Recover custom credentials from local storage if existing
-  let cachedCreds = {};
-  try {
-    const raw = localStorage.getItem('sas_v3_integrations_creds');
-    if (raw) cachedCreds = JSON.parse(raw);
-  } catch (e) {}
+  // Remove historical plaintext credentials. Never restore a "connected"
+  // verdict from storage: provider authentication must happen on each check.
+  try { localStorage.removeItem('sas_v3_integrations_creds'); } catch {}
 
   INTEGRATIONS_DATA.forEach(item => {
-    // Default connection status
-    if (cachedCreds[item.id]) {
-      INTEGRATION_STATUSES[item.id] = 'CONNECTED';
-    } else {
-      INTEGRATION_STATUSES[item.id] = 'DISCONNECTED';
-    }
+    if (!INTEGRATION_STATUSES[item.id]) INTEGRATION_STATUSES[item.id] = 'DISCONNECTED';
 
     const card = document.createElement('div');
     card.className = 'integration-card';
@@ -1084,7 +1076,7 @@ function initIntegrations() {
       card.classList.add('active');
     }
 
-    const isConnected = INTEGRATION_STATUSES[item.id] === 'CONNECTED';
+    const isConnected = INTEGRATION_STATUSES[item.id] === 'VERIFIED';
     card.innerHTML = `
       <div>
         <div class="integration-card__header">
@@ -1117,7 +1109,7 @@ function selectIntegration(item) {
   const statusEl = document.getElementById('active-integration-status');
   if (titleEl) titleEl.textContent = item.name;
 
-  const isConnected = INTEGRATION_STATUSES[item.id] === 'CONNECTED';
+  const isConnected = INTEGRATION_STATUSES[item.id] === 'VERIFIED';
   if (statusEl) {
     statusEl.textContent = INTEGRATION_STATUSES[item.id];
     statusEl.className = isConnected ? 'badge badge--green' : 'badge badge--gray';
@@ -1144,17 +1136,8 @@ function selectIntegration(item) {
     sInput.value = '';
   }
 
-  // Recover cached credentials
-  try {
-    const raw = localStorage.getItem('sas_v3_integrations_creds');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed[item.id]) {
-        if (pInput) pInput.value = parsed[item.id].primary || '';
-        if (sInput) sInput.value = parsed[item.id].secondary || '';
-      }
-    }
-  } catch(e) {}
+  // No localStorage/sessionStorage credential recovery. Operator enters
+  // credentials only for the current verification request.
 
   // Hide handshake logs by default when switching
   const resultCard = document.getElementById('handshake-result-card');
@@ -1182,75 +1165,57 @@ async function testIntegrationHandshake() {
     btn.disabled = true;
   }
 
-  // Simulate server handshake step by step with authentic logs
-  setTimeout(() => {
-    if (logOut) logOut.textContent += `[MCP Gateway] Gating credentials authorization check...\n`;
-  }, 400);
-
-  setTimeout(() => {
-    if (logOut) logOut.textContent += `[MCP Gateway] Resolving connection endpoint and binding listeners...\n`;
-  }, 800);
-
-  setTimeout(() => {
-    // Connect success or failure simulation
-    const success = primaryVal.length > 3; // Any reasonable token length will succeed
-
-    if (success) {
-      INTEGRATION_STATUSES[selectedIntegration.id] = 'CONNECTED';
-      if (logOut) {
-        logOut.textContent += `[MCP Gateway] Handshake success! Connected to ${selectedIntegration.name} safely.\n`;
-        logOut.textContent += `[MCP Gateway] Secure channel established. Host metrics and actions initialized successfully.`;
-        logOut.className = 'handshake-log success';
-      }
-
-      // Cache credentials
-      try {
-        const raw = localStorage.getItem('sas_v3_integrations_creds') || '{}';
-        const parsed = JSON.parse(raw);
-        parsed[selectedIntegration.id] = { primary: primaryVal, secondary: secondaryVal };
-        localStorage.setItem('sas_v3_integrations_creds', JSON.stringify(parsed));
-      } catch (e) {}
-
-      // Show wallet banner
-      showBanner(`✓ Successfully connected to ${selectedIntegration.name}!`, 'ok');
-    } else {
-      INTEGRATION_STATUSES[selectedIntegration.id] = 'DISCONNECTED';
-      if (logOut) {
-        logOut.textContent += `[MCP Gateway] Handshake rejected: Credentials or parameters missing/invalid.\n`;
-        logOut.textContent += `[MCP Gateway] Verify token correctness or check client logs before retry.`;
-        logOut.className = 'handshake-log error';
-      }
-      // Remove cache
-      try {
-        const raw = localStorage.getItem('sas_v3_integrations_creds') || '{}';
-        const parsed = JSON.parse(raw);
-        delete parsed[selectedIntegration.id];
-        localStorage.setItem('sas_v3_integrations_creds', JSON.stringify(parsed));
-      } catch (e) {}
-
-      showBanner(`⚠ Connection to ${selectedIntegration.name} failed. Check token inputs.`, 'warn');
+  const id = selectedIntegration.id;
+  const displayName = selectedIntegration.name;
+  let success = false;
+  let untested = false;
+  try {
+    if (logOut) logOut.textContent += '[MCP Gateway] Calling provider credential verifier...\n';
+    const response = await fetch('/api/connections/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ id, primary: primaryVal, secondary: secondaryVal })
+    });
+    const result = await response.json();
+    success = response.ok && result.ok === true && result.verified === true;
+    untested = result.status === 'not-verified';
+    INTEGRATION_STATUSES[id] = success ? 'VERIFIED' : (untested ? 'NOT VERIFIED' : 'DISCONNECTED');
+    if (logOut) {
+      logOut.textContent += success
+        ? '[MCP Gateway] Provider authentication verified. This does not establish a persistent MCP session.'
+        : '[MCP Gateway] ' + (untested ? 'Not verified: no working provider tester is installed.'
+                                      : 'Provider authentication failed or could not be verified.');
+      logOut.className = success ? 'handshake-log success' : 'handshake-log error';
     }
-
+    showBanner(success ? '✓ ' + displayName + ': credentials verified'
+      : '⚠ ' + displayName + ': ' + (untested ? 'no supported verifier' : 'verification failed'),
+      success ? 'ok' : 'warn');
+  } catch (error) {
+    INTEGRATION_STATUSES[id] = 'NOT VERIFIED';
+    if (logOut) {
+      logOut.textContent += '[MCP Gateway] Verification service unavailable; no connection established.';
+      logOut.className = 'handshake-log error';
+    }
+    showBanner('⚠ Verification service unavailable. No connection established.', 'warn');
+  } finally {
+    // Secrets exist only in the input fields during this attempt, and in
+    // the HTTPS request while in flight. They are never persisted client-side.
+    document.getElementById('integration-key-input').value = '';
+    document.getElementById('integration-secondary-input').value = '';
     if (btn) {
       btn.textContent = 'TEST HANDSHAKE';
       btn.disabled = false;
     }
-
-    // Refresh grids to show updated status
     initIntegrations();
-
-    // Maintain active card highlight
-    const activeCard = document.getElementById(`integration-card-${selectedIntegration.id}`);
+    const activeCard = document.getElementById('integration-card-' + id);
     if (activeCard) activeCard.classList.add('active');
-
-    // Update status badge
     const statusEl = document.getElementById('active-integration-status');
     if (statusEl) {
-      statusEl.textContent = INTEGRATION_STATUSES[selectedIntegration.id];
+      statusEl.textContent = INTEGRATION_STATUSES[id];
       statusEl.className = success ? 'badge badge--green' : 'badge badge--gray';
     }
-
-  }, 1500);
+  }
 }
 
 // Loads the corresponding integration connector logic directly into the VFS / IDE panel
