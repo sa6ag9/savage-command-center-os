@@ -16,10 +16,16 @@ function sb(path, opts = {}) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.headers?.origin;
+  const allowed = (process.env.COMMAND_CENTER_ALLOWED_ORIGINS ?? '').split(',').map(x => x.trim()).filter(Boolean);
+  if (origin && !allowed.includes(origin)) return res.status(403).json({ error: 'Origin not allowed' });
+  if (origin) {
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") { res.status(200).end(); return; }
+  if (req.method === "OPTIONS") { res.status(204).end(); return; }
 
   try {
     if (req.method === "GET") {

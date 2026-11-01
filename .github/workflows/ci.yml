@@ -89,10 +89,25 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      # Baseline repository has no committed lockfile. Do not enable the
+      # setup-node npm cache until a reviewed lockfile is committed.
+      - name: Resolve an ephemeral install lock for this CI run
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
-      - name: Run test suite
-        run: npm test
+      - name: Install dependencies from the generated lock
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run test suite with raw logs
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee command-center-tests.log
+
+      - name: Save raw test output even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: command-center-tests
+          path: command-center-tests.log
+          if-no-files-found: warn

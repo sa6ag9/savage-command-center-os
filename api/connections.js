@@ -103,10 +103,16 @@ const TESTERS = {
 };
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers?.origin;
+  const allowed = (process.env.COMMAND_CENTER_ALLOWED_ORIGINS ?? '').split(',').map(x => x.trim()).filter(Boolean);
+  if (origin && !allowed.includes(origin)) return res.status(403).json({ ok: false, message: 'Origin not allowed' });
+  if (origin) {
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (req.method === 'OPTIONS') { res.status(204).end(); return; }
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -119,24 +125,23 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, message: 'Integration id is required.', logs });
   }
 
-  const tester = TESTERS[id];
+  if (typeof id !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(id)) {
+    return res.status(400).json({ ok: false, verified: false, message: 'Invalid integration ID', logs });
+  }
+  const tester = Object.hasOwn(TESTERS, id) ? TESTERS[id] : undefined;
   if (!tester) {
-    logs.push(`[Gateway] No tester registered for connector "${id}"`);
-    logs.push('[Gateway] Performing generic reachability check...');
-    // Fallback: just confirm we received the request
-    if (primary) {
-      logs.push('[Gateway] ✓ Credentials received — manual validation required');
-      return res.json({ ok: true, message: 'Credentials stored. Manual verification required for this connector.', logs });
-    }
-    return res.json({ ok: false, message: `No automated test available for "${id}".`, logs });
+    return res.status(422).json({ ok: false, verified: false, status: 'not-verified',
+      message: 'No real credential tester is registered for this integration.', logs });
+  }
+  if (typeof primary !== 'string' || !primary.trim()) {
+    return res.status(400).json({ ok: false, verified: false, message: 'Credential required', logs });
   }
 
   try {
     const result = await tester({ primary, secondary });
-    return res.json(result);
+    return res.status(result.ok === true ? 200 : 401).json({ ...result, verified: result.ok === true });
   } catch (err) {
-    console.error(err);
-    logs.push(`[Gateway] ✗ Unexpected error: ${err.message}`);
-    return res.status(500).json({ ok: false, message: err.message, logs });
+    // Never expose upstream request details, keys, or provider error URLs.
+    return res.status(502).json({ ok: false, verified: false, message: 'Credential verifier unavailable', logs });
   }
 };
