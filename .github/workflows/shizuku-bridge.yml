@@ -1,0 +1,31 @@
+name: Shizuku bridge shell syntax
+on:
+  pull_request:
+    paths:
+      - 'android/shizuku/**'
+      - 'android/maintenance/**'
+      - '.github/workflows/shizuku-bridge.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'android/shizuku/**'
+      - 'android/maintenance/**'
+      - '.github/workflows/shizuku-bridge.yml'
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell syntax
+        shell: bash
+        run: |
+          bash -n android/shizuku/install-exported-rish.sh
+          bash -n android/shizuku/check-phone-shizuku.sh
+          bash -n android/maintenance/savage-remote-guard.sh
+      - name: Guard against remote installation and automatic privilege escalation
+        shell: bash
+        run: |
+          if grep -En 'curl[^\n]*[|][[:space:]]*(bash|sh)|wget[^\n]*[|][[:space:]]*(bash|sh)|(^|[[:space:]])(su|sudo)[[:space:]]' android/shizuku/*.sh; then
+            echo 'Potential remote install or privilege escalation detected'; exit 1
+          fi
