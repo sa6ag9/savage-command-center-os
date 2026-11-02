@@ -161,7 +161,7 @@ function createSocialControlPlane(options = {}) {
       store.write(stateData);
       return res.redirect('/social.html?connected=' + encodeURIComponent(network));
     } catch (error) {
-      return res.status(error.status || 500).send('OAuth callback failed: ' + error.message);
+      return res.status(500).send('OAuth callback failed');
     }
   });
 
@@ -170,8 +170,8 @@ function createSocialControlPlane(options = {}) {
     res.json({
       service: 'savage-social-control-plane',
       brand: 'Savage AI Studios',
-      timezone: process.env.SOCIAL_TIMEZONE || 'America/Los_Angeles',
-      networks: NETWORKS.map((network) => providerConfig(network)),
+      timezone: env.SOCIAL_TIMEZONE || 'America/Los_Angeles',
+      networks: NETWORKS.map((network) => providerConfig(network, env)),
       counts: {
         accounts: state.accounts.length,
         queued: state.posts.filter((p) => p.status === 'queued').length,
