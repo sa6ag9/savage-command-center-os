@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { DEFAULT_WEIGHTS, evaluateCreative, normalizeWeights } = require('./social-metrics.js');
 const { buildAuthorizationUrl, verifyState, exchangeCode, createTokenStore } = require('./social-oauth.js');
+const { requireSocialOperator } = require('./social-auth.js');
 
 const NETWORKS = Object.freeze(['instagram','youtube','x','linkedin','reddit']);
 const DEFAULT_STATE = Object.freeze({ version: 1, accounts: [], posts: [], receipts: [], metricWeights: DEFAULT_WEIGHTS, metrics: [] });
@@ -87,34 +88,57 @@ function seedFirstWave(store) {
 }
 
 function createSocialControlPlane(options = {}) {
-  const statePath = options.statePath || process.env.SOCIAL_STATE_PATH || path.join(__dirname, 'data', 'social-control-plane.json');
+  const env = options.env || process.env;
+  const statePath = options.statePath || env.SOCIAL_STATE_PATH || path.join(__dirname, 'data', 'social-control-plane.json');
   const store = createStore(statePath);
   seedFirstWave(store);
   const router = express.Router();
+  // OAuth callback must be reachable by the provider, but only a previously
+  // operator-authorized, unconsumed state may enter the token exchange.
+  const pendingOauthStates = new Map();
+  router.use((req, res, next) => {
+    if (req.method === 'GET' && /^\/oauth\/(instagram|youtube|x|linkedin|reddit)\/callback\/?$/.test(req.path)) {
+      res.setHeader('Cache-Control', 'no-store');
+      return next();
+    }
+    if (!requireSocialOperator(req, res, env)) return;
+    next();
+  });
 
   router.get('/oauth/:network/connect', (req, res) => {
     const network = String(req.params.network || '').toLowerCase();
     if (!NETWORKS.includes(network)) return res.status(400).json({ error: 'unsupported network' });
     try {
-      const auth = buildAuthorizationUrl(network);
+      const auth = buildAuthorizationUrl(network, env);
       if (!auth.ready) return res.status(409).json({ error: 'oauth_not_configured', missing: auth.missing });
-      return res.redirect(auth.url);
+      const signed = verifyState(auth.state, env);
+      if (!signed || !signed.nonce) return res.status(500).json({ error: 'oauth_start_failed' });
+      const now = Date.now();
+      for (const [nonce, expiry] of pendingOauthStates) {
+        if (expiry <= now) pendingOauthStates.delete(nonce);
+      }
+      if (pendingOauthStates.size >= 1000) return res.status(429).json({ error: 'too_many_pending_oauth_flows' });
+      pendingOauthStates.set(signed.nonce, now + 10 * 60 * 1000);
+      return res.json({ url: auth.url });
     } catch (error) {
-      return res.status(500).json({ error: 'oauth_start_failed', message: error.message });
+      return res.status(500).json({ error: 'oauth_start_failed' });
     }
   });
 
   router.get('/oauth/:network/callback', async (req, res) => {
     const network = String(req.params.network || '').toLowerCase();
     if (!NETWORKS.includes(network)) return res.status(400).send('Unsupported network');
-    const state = verifyState(req.query.state);
+    const state = verifyState(req.query.state, env);
     if (!state || state.network !== network) return res.status(400).send('Invalid or expired OAuth state');
     if (!req.query.code) return res.status(400).send('Missing OAuth authorization code');
+    const expiry = pendingOauthStates.get(state.nonce);
+    if (!expiry || expiry <= Date.now()) return res.status(400).send('Invalid or already used OAuth state');
+    pendingOauthStates.delete(state.nonce); // one-time use before any provider request
 
     try {
-      const tokens = await exchangeCode(network, String(req.query.code));
-      const tokenPath = process.env.SOCIAL_TOKEN_STORE_PATH || path.join(__dirname, 'data', 'social-tokens.json');
-      const tokenStore = createTokenStore(tokenPath);
+      const tokens = await exchangeCode(network, String(req.query.code), env);
+      const tokenPath = env.SOCIAL_TOKEN_STORE_PATH || path.join(__dirname, 'data', 'social-tokens.json');
+      const tokenStore = createTokenStore(tokenPath, env);
       tokenStore.write(network, tokens);
 
       const stateData = store.read();
@@ -223,7 +247,7 @@ function createSocialControlPlane(options = {}) {
     const post = state.posts.find((p) => p.id === req.params.id);
     if (!post) return res.status(404).json({ error: 'post not found' });
     const missing = post.networks.filter((network) => {
-      const cfg = providerConfig(network);
+      const cfg = providerConfig(network, env);
       return !cfg.clientIdConfigured || !cfg.clientSecretConfigured;
     });
     const receipt = {
