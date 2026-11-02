@@ -1,3 +1,5 @@
+import { requireWriteAuthorization } from './_write-auth.mjs';
+
 // Supabase REST API — no pg driver needed, uses fetch + anon key
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
@@ -24,7 +26,7 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") { res.status(204).end(); return; }
 
   try {
@@ -40,6 +42,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
+      if (!requireWriteAuthorization(req, res)) return;
       const { title, context, accepted, outcome, proof_hash, replay_verdict, agent_name } = req.body || {};
       if (!title || context === undefined || accepted === undefined) {
         return res.status(400).json({ error: "title, context, and accepted are required" });
