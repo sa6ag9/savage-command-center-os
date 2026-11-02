@@ -1,3 +1,5 @@
+import { requireWriteAuthorization } from './_write-auth.mjs';
+
 // Supabase REST API — no pg driver needed, uses fetch + anon key
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
@@ -24,10 +26,25 @@ function present(row) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // Public dashboard reads remain cross-origin. Mutations must originate from
+  // an approved browser origin (or an origin-less server-to-server client).
+  const origin = req.headers?.origin;
+  if (req.method === "PUT" || req.method === "OPTIONS") {
+    const allowed = (process.env.COMMAND_CENTER_ALLOWED_ORIGINS ?? "")
+      .split(",").map(value => value.trim()).filter(Boolean);
+    if (origin && !allowed.includes(origin)) {
+      return res.status(403).json({ error: "Origin not allowed" });
+    }
+    if (origin) {
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    }
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") { res.status(200).end(); return; }
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") { res.status(204).end(); return; }
 
   try {
     if (req.method === "GET") {
@@ -47,6 +64,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PUT") {
+      if (!requireWriteAuthorization(req, res)) return;
       const body = req.body || {};
       const patch = {};
       for (const f of FIELDS) if (body[f] !== undefined) patch[f] = body[f];
