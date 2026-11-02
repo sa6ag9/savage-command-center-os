@@ -1,0 +1,9 @@
+# GitHub intelligence public-read boundary (review only)
+
+The public `GET /api/github/intel` endpoint must never disclose private repository activity. The previous handler sent the configured privileged `GITHUB_TOKEN` on the configured repository's commits request and then returned the commit SHA prefix, subject, author and timestamp to any anonymous caller. Restricting only the repository listing to `type=public` did not protect the separate commits path.
+
+This draft changes both the Vercel handler and its packaged shell mirror. `/user` may still use the server token to retrieve the operator's public profile fields. Every other upstream GitHub request is unauthenticated, including the configured repo visibility check, commits, public repo listing and public events fallback. Commit retrieval additionally requires the unauthenticated metadata response to explicitly identify the configured repository and `private === false`. Missing, malformed, private or inaccessible metadata fails closed to the public events fallback. Repository names are constrained to safe path segments. Returned repository listing entries must explicitly have `private === false`.
+
+The eight local Node tests invoke both real handlers with controlled upstream responses, including a private repo, a maliciously returned private metadata response, a public repo, and non-GET requests. These tests do **not** authenticate against live GitHub, verify production Vercel routing, or establish that all unrelated dashboard endpoints are secure.
+
+**Operations:** Review before merging. No production configuration or token rotation occurs in this PR. If a privileged private commit feed is needed, implement a distinct authenticated operator endpoint with server-side authorization, not a bypass in this public route. Keep the separate social control plane authorization and database RLS defects open.
