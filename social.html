@@ -17,6 +17,15 @@
     <a class="back" href="/">COMMAND CENTER</a>
   </header>
 
+  <section class="panel" aria-labelledby="social-auth-title">
+    <h2 id="social-auth-title">Operator access</h2>
+    <p class="note">Enter the dedicated social control token to access the private queue. It stays in this page's memory only and is not saved to browser storage.</p>
+    <label for="social-token">Social control token</label>
+    <input id="social-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="social-auth-status">
+    <button id="social-unlock" type="button">UNLOCK SOCIAL CONTROL</button>
+    <p id="social-auth-status" role="status" aria-live="polite">Locked. No private social data has been loaded.</p>
+  </section>
+
   <section class="status-grid" id="network-grid" aria-label="Network status"></section>
   <section class="panel">
     <div class="panel-head">
@@ -26,9 +35,9 @@
       </div>
     </div>
     <div class="connect-actions">
-      <a class="connect-link" href="/api/social/oauth/instagram/connect">CONNECT INSTAGRAM</a>
-      <a class="connect-link" href="/api/social/oauth/youtube/connect">CONNECT YOUTUBE</a>
-      <a class="connect-link" href="/api/social/oauth/x/connect">CONNECT X</a>
+      <button type="button" class="connect-link" data-oauth-network="instagram">CONNECT INSTAGRAM</button>
+      <button type="button" class="connect-link" data-oauth-network="youtube">CONNECT YOUTUBE</button>
+      <button type="button" class="connect-link" data-oauth-network="x">CONNECT X</button>
     </div>
     <p class="note">If a provider is not configured yet, the server will tell us exactly which OAuth settings are missing instead of pretending it is connected.</p>
   </section>
