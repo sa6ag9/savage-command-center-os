@@ -103,7 +103,7 @@ for (const file of entrypoints) {
       }
       if (url.includes('/commits?')) return reply(200, [{
         sha: 'abcdef0123456789',
-        commit: { message: 'Public change\\nbody', author: { name: 'Contributor', date: '2026-11-02' } }
+        commit: { message: 'Public change\nbody', author: { name: 'Contributor', date: '2026-11-02' } }
       }]);
       if (url.includes('/users/sa6ag9/repos?')) return reply(200, []);
       throw Error('Unexpected endpoint: ' + url);
