@@ -14,6 +14,8 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import WebSocket from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,7 +23,7 @@ const __dirname = path.dirname(__filename);
 
 // ── Unit tests: safeWorkspacePath and safeConnectorPath ──────────────────────
 const require = createRequire(import.meta.url);
-const { safeWorkspacePath, safeConnectorPath, WORKSPACE_ROOT } = require('../server.js');
+const { safeWorkspacePath, safeWorkspaceMutationPath, safeConnectorPath, WORKSPACE_ROOT } = require('../server.js');
 
 test('safeWorkspacePath - normal relative path resolves inside workspace', () => {
   const result = safeWorkspacePath('app.js');
@@ -246,4 +248,67 @@ test('HTTP - app.js is served (required UI asset)', async () => {
 test('HTTP - style.css is served (required UI asset)', async () => {
   const res = await fetch(`http://127.0.0.1:${WS_PORT}/style.css`);
   assert.equal(res.status, 200, 'style.css must be served');
+});
+
+
+test('WS workspace - mutation helper rejects root, empty and outside paths without touching files', () => {
+  assert.equal(safeWorkspacePath('.'), WORKSPACE_ROOT, 'read-only root compatibility remains');
+  assert.equal(safeWorkspaceMutationPath('.'), null);
+  assert.equal(safeWorkspaceMutationPath(WORKSPACE_ROOT), null);
+  assert.equal(safeWorkspaceMutationPath(''), null);
+  assert.equal(safeWorkspaceMutationPath('../outside.txt'), null);
+  assert.equal(safeWorkspaceMutationPath('test-new-file.txt'), path.join(WORKSPACE_ROOT, 'test-new-file.txt'));
+});
+
+test('WS workspace - existing symlink components fail closed, including symlinked parent directories', (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'savage-workspace-path-'));
+  const outside = path.join(temp, 'outside.txt');
+  const link = path.join(WORKSPACE_ROOT, 'test-link-' + randomUUID());
+  fs.writeFileSync(outside, 'private-outside');
+  try {
+    try {
+      fs.symlinkSync(temp, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) { t.skip('OS forbids symlink creation'); return; }
+      throw error;
+    }
+    assert.equal(safeWorkspacePath(path.join(link, 'outside.txt')), null);
+    assert.equal(safeWorkspaceMutationPath(path.join(link, 'new.txt')), null);
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'private-outside');
+  } finally {
+    fs.rmSync(link, { force: true });
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('WS security - live read/write cannot follow a workspace symlink to outside file', async (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'savage-workspace-ws-'));
+  const outside = path.join(temp, 'private.txt');
+  const linkName = 'test-external-' + randomUUID() + '.txt';
+  const link = path.join(WORKSPACE_ROOT, linkName);
+  fs.writeFileSync(outside, 'external-unchanged');
+  let ws;
+  try {
+    try {
+      fs.symlinkSync(outside, link, 'file');
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) { t.skip('OS forbids symlink creation'); return; }
+      throw error;
+    }
+    ws = await openAuthedSocket();
+    const read = await wsRequest(ws, {
+      type: 'read_file', filepath: linkName, nonce: randomUUID(), ts: Date.now()
+    });
+    assert.match(read.error || '', /access denied/i);
+    assert.equal(read.content, undefined);
+    const write = await wsRequest(ws, {
+      type: 'write_file', filepath: linkName, content: 'overwritten', nonce: randomUUID(), ts: Date.now()
+    });
+    assert.match(write.error || '', /access denied/i);
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'external-unchanged');
+  } finally {
+    if (ws) ws.close();
+    fs.rmSync(link, { force: true });
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });

@@ -62,12 +62,34 @@ const WORKSPACE_ROOT = __dirname;
 const WORKSPACE_PREFIX = WORKSPACE_ROOT + path.sep; // e.g. "/app/"
 
 function safeWorkspacePath(relOrAbs) {
+  if (typeof relOrAbs !== 'string' || relOrAbs.length === 0) return null;
   const resolved = path.resolve(WORKSPACE_ROOT, relOrAbs);
-  // Accept the root itself or any strict descendant
   if (resolved !== WORKSPACE_ROOT && !resolved.startsWith(WORKSPACE_PREFIX)) {
-    return null; // escape attempt
+    return null;
+  }
+
+  // Lexical containment is not filesystem containment: a workspace symlink
+  // can point outside the root. Reject every existing symlink component.
+  // Missing descendants are allowed for create operations, but local
+  // concurrent path replacement remains a separate TOCTOU deployment risk.
+  let cursor = WORKSPACE_ROOT;
+  for (const segment of path.relative(WORKSPACE_ROOT, resolved).split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment);
+    try {
+      if (fs.lstatSync(cursor).isSymbolicLink()) return null;
+    } catch (error) {
+      if (error.code === 'ENOENT') break;
+      return null;
+    }
   }
   return resolved;
+}
+
+// Mutations must never target the workspace root itself. In particular,
+// delete_file('.') previously reached fs.rm(root, { recursive: true }).
+function safeWorkspaceMutationPath(relOrAbs) {
+  const resolved = safeWorkspacePath(relOrAbs);
+  return resolved && resolved !== WORKSPACE_ROOT ? resolved : null;
 }
 
 // ================================================================
@@ -472,7 +494,7 @@ wss.on('connection', (ws, request) => {
 
         case 'write_file': {
           // Securely write file content, capped to prevent disk-fill abuse
-          const writePath = safeWorkspacePath(data.filepath);
+          const writePath = safeWorkspaceMutationPath(data.filepath);
           if (!writePath) {
             auditLog('path_traversal_attempt', { ip: remoteIp, filepath: data.filepath, action: 'write_file' });
             ws.send(JSON.stringify({ type: 'write_file_response', error: 'Access denied: path escapes workspace' }));
@@ -508,7 +530,7 @@ wss.on('connection', (ws, request) => {
 
         case 'delete_file': {
           // Securely delete file or directory — sibling-prefix traversal blocked
-          const deletePath = safeWorkspacePath(data.filepath);
+          const deletePath = safeWorkspaceMutationPath(data.filepath);
           if (!deletePath) {
             auditLog('path_traversal_attempt', { ip: remoteIp, filepath: data.filepath, action: 'delete_file' });
             ws.send(JSON.stringify({ type: 'delete_file_response', error: 'Access denied: path escapes workspace' }));
@@ -528,8 +550,8 @@ wss.on('connection', (ws, request) => {
 
         case 'rename_file': {
           // Securely rename file — both paths checked against workspace
-          const oldPath = safeWorkspacePath(data.filepath);
-          const newPath = safeWorkspacePath(data.new_filepath);
+          const oldPath = safeWorkspaceMutationPath(data.filepath);
+          const newPath = safeWorkspaceMutationPath(data.new_filepath);
           if (!oldPath || !newPath) {
             auditLog('path_traversal_attempt', { ip: remoteIp, filepath: data.filepath, new_filepath: data.new_filepath, action: 'rename_file' });
             ws.send(JSON.stringify({ type: 'rename_file_response', error: 'Access denied: path escapes workspace' }));
@@ -570,7 +592,7 @@ wss.on('connection', (ws, request) => {
 // Export helpers for unit testing BEFORE starting the server.
 // When required as a module (e.g. by tests), the server does not listen —
 // only the exported utility functions are available.
-module.exports = { safeWorkspacePath, safeConnectorPath, WORKSPACE_ROOT };
+module.exports = { safeWorkspacePath, safeWorkspaceMutationPath, safeConnectorPath, WORKSPACE_ROOT };
 
 // Only bind and listen when executed directly (not when require()'d by tests)
 if (require.main === module) {
