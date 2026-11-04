@@ -1,7 +1,7 @@
 # savage-command-center-os — Ground Truth
 
-**Last verified:** 2026-11-03 (Tonight Sprint merge train — Tights first-hand local verification: diff read in full, suite run on exact PR head + baseline control, post-merge tree proof; no deployed-runtime validation)
-**Canonical branch:** master @ 5f9050e0b5955afd985a32d76b2600b3e4b00fd2
+**Last verified:** 2026-11-03 (Tonight Sprint merge train — Tights first-hand local verification: every diff read in full, suite run on each exact PR head + baseline control + merged master, post-merge tree proofs; no deployed-runtime validation)
+**Canonical branch:** master @ be88f72eeb0648e96f7132b14dcd8f3fd2cfb7ad
 
 ## What this repo is
 
@@ -13,8 +13,8 @@ repo also carries a `main` branch; the default/canonical branch is
 
 ## Verified current state
 
-- **Head (master):** `5f9050e0b5955afd985a32d76b2600b3e4b00fd2` — squash merge of PR #28. Tree = 80 blobs. PR #26 was merged earlier at `e30a0625db`.
-- **Tests (Tights local run, 2026-11-03, dependencies installed):** **PR #28 head: 66/66 pass, 0 fail, 0 skip; baseline control on `f4a12a1b`: 59/59 pass.** Prior: master GitHub Actions #41406083656 measured 59/59. No compile step; `node --check` gates.
+- **Head (master):** `be88f72eeb0648e96f7132b14dcd8f3fd2cfb7ad` — squash merge of PR #31, completing the four-PR Tonight Sprint security train (#28–#31). Tree = 84 blobs.
+- **Tests (Tights local run, 2026-11-03, dependencies installed):** **merged master: 81/81 pass, 0 fail, 0 skip** (baseline control on `f4a12a1b`: 59/59; PR heads: #28 66/66, #29 67/67, #30 63/63, #31 62/62). No compile step; `node --check` gates.
 - **Security posture changed on master by PR #26** (Phase 2 Prompt
   6, diff read in full by the train): simulated connections ended,
   cached plaintext credentials removed from localStorage, CORS
@@ -47,6 +47,10 @@ unverifiable from here.
 
 - **#28** — squash-merged into `master` at `5f9050e0b5955afd985a32d76b2600b3e4b00fd2` (tree proof: PR paths blob-identical post-merge, 77 → 80 blobs, no other path changed). Independent server-only bearer authorization now required for `POST /api/decisions` and `PUT /api/organism-status` on canonical `master`, closing the source-confirmed unauthenticated mutation risk. Local loopback tests are not external Supabase acceptance: protected server-side `COMMAND_CENTER_WRITE_TOKEN` provisioning, Supabase RLS, and deployed-runtime verification remain mandatory before deployment. See `docs/WRITE_AUTH_BOUNDARY.md`.
 
+- **#29** — squash-merged at `14b1dd807994f85d468598b3994bafb98c00bf01` (tree proof PASS, 80 → 82 blobs). Public GitHub intel no longer discloses private repository commits: privileged token removed from public intel, repository visibility verified without the token, private repositories filtered.
+- **#30** — squash-merged at `91dd2d936e93dabaa2b334b1bad1daf036642e28` (tree proof PASS, 82 → 84 blobs). Social control plane now requires a dedicated operator bearer credential as the mounted default (fail closed); OAuth callbacks are admitted only when bound to an unconsumed operator initiation nonce. Known limitation carried from the PR: the browser obtains the raw authorization URL after operator authorization; self-use only.
+- **#31** — squash-merged at `be88f72eeb0648e96f7132b14dcd8f3fd2cfb7ad` (tree proof PASS, 84 → 84 blobs). WebSocket workspace paths reject symlink components and root-targeting mutations. Carried limitation: path validation is not a race-free filesystem sandbox (TOCTOU under a same-user local process).
+
 ## Known defects / honest gaps
 
 - Self-use only today: 1 product ON (personal command-center PWA).
@@ -56,7 +60,7 @@ unverifiable from here.
   not finished.
 - Deployed-runtime behaviour of either branch is not verified in
   this pass.
-- The separately mounted `/api/social` router still has unauthenticated mutation routes on master and needs its distinct authorization/session repair (draft #30, under verification in this train).
+- Token provisioning for the new boundaries (`COMMAND_CENTER_WRITE_TOKEN`, `SOCIAL_CONTROL_TOKEN`) and deployed-runtime verification remain outstanding; the merged code fails closed until they are provisioned.
 
 ## Where it is going
 
