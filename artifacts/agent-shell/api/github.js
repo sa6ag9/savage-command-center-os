@@ -6,12 +6,14 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_REPO = process.env.GITHUB_REPO || 'savage-command-center-os';
 const GITHUB_OWNER = process.env.GITHUB_OWNER || 'savagnic';
 
-function ghFetch(path) {
+// Public dashboard reads never inherit the privileged server token.
+// Only the /user profile lookup is allowed to authenticate.
+function ghFetch(path, authenticated = false) {
   const headers = {
     Accept: 'application/vnd.github.v3+json',
     'User-Agent': 'Sovereign-Agent-Shell',
   };
-  if (GITHUB_TOKEN) headers.Authorization = `token ${GITHUB_TOKEN}`;
+  if (authenticated && GITHUB_TOKEN) headers.Authorization = `token ${GITHUB_TOKEN}`;
   return fetch(`https://api.github.com${path}`, { headers });
 }
 
@@ -30,7 +32,7 @@ export default async function handler(req, res) {
 
     // Fetch user profile
     if (GITHUB_TOKEN) {
-      const userResp = await ghFetch('/user');
+      const userResp = await ghFetch('/user', true);
       if (userResp.ok) {
         const u = await userResp.json();
         payload.user = {
@@ -44,10 +46,18 @@ export default async function handler(req, res) {
       }
     }
 
-    // Fetch recent commits from the configured repo
+    // A configured private repo must not be disclosed to anonymous callers.
+    // Check visibility WITHOUT the token, then fetch commits WITHOUT the token.
     try {
-      const commitsResp = await ghFetch(`/repos/${GITHUB_OWNER}/${GITHUB_REPO}/commits?per_page=10`);
-      if (commitsResp.ok) {
+      const safeSegment = /^[A-Za-z0-9_.-]{1,100}$/;
+      if (safeSegment.test(GITHUB_OWNER) && safeSegment.test(GITHUB_REPO)) {
+        const repoResp = await ghFetch(`/repos/${GITHUB_OWNER}/${GITHUB_REPO}`);
+        const metadata = repoResp.ok ? await repoResp.json() : null;
+        const publicRepo = metadata?.private === false &&
+          metadata?.full_name?.toLowerCase() === `${GITHUB_OWNER}/${GITHUB_REPO}`.toLowerCase();
+        if (publicRepo) {
+          const commitsResp = await ghFetch(`/repos/${GITHUB_OWNER}/${GITHUB_REPO}/commits?per_page=10`);
+          if (commitsResp.ok) {
         const commits = await commitsResp.json();
         payload.repo = `${GITHUB_OWNER}/${GITHUB_REPO}`;
         payload.commits = (commits || []).slice(0, 10).map(c => ({
@@ -56,16 +66,18 @@ export default async function handler(req, res) {
           author: c.commit?.author?.name || c.author?.login || 'unknown',
           date: c.commit?.author?.date || null,
         }));
+          }
+        }
       }
     } catch (_) {
-      // repo might not be accessible, skip silently
+      // Repo may be private, absent or unavailable; expose no privileged metadata.
     }
 
     // Fetch public repos only — never expose private repo metadata via an unauthenticated endpoint
     const reposResp = await ghFetch(`/users/${GITHUB_OWNER}/repos?sort=pushed&per_page=20&type=public`);
     if (reposResp.ok) {
       const repos = await reposResp.json();
-      payload.repos = (repos || []).slice(0, 10).map(r => ({
+      payload.repos = (repos || []).filter(r => r.private === false).slice(0, 10).map(r => ({
         name: r.name,
         full_name: r.full_name,
         language: r.language,
